@@ -1,4 +1,4 @@
-import docx
+from docx import Document
 import openai
 import random
 import json
@@ -9,6 +9,9 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 import shutil
 import os
 from dotenv import load_dotenv
+import fitz
+import pytesseract
+from pdf2image import convert_from_path
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -42,15 +45,20 @@ def parse_questions(text):
     current_question = None
 
     for line in lines:
-        if line.endswith("?"):
+        line = line.strip()  # Убираем лишние пробелы и \n
+
+        if not line:
+            continue  # Пропускаем пустые строки
+
+        if line.endswith("?"):  # Если это вопрос
             if current_question:
                 questions.append(current_question)
             current_question = {"question": line, "answers": [], "tags": []}
-        elif current_question and line.strip():
+        elif current_question:
             if line.startswith("Теги:"):
                 current_question["tags"] = [tag.strip() for tag in line.replace("Теги:", "").split(",")]
             else:
-                current_question["answers"].append(line.strip())
+                current_question["answers"].append(line)
 
     if current_question:
         questions.append(current_question)
@@ -84,11 +92,46 @@ def generate_wrong_answers(question, correct_answer, tags):
         return ["Ошибка генерации 1", "Ошибка генерации 2", "Ошибка генерации 3"]
 
 
+def read_docx(file_path):
+    """Читает текст из .docx файла и возвращает его как строку."""
+    doc = Document(file_path)
+    text = "\n".join([para.text for para in doc.paragraphs])
+    return text
+
+def read_pdf(file_path):
+    """Читает текст из PDF-файла и возвращает его как строку."""
+    doc = fitz.open(file_path)
+    text = "\n".join([page.get_text() for page in doc])
+    return text
+
+
+def read_pdf_with_ocr(file_path):
+    """Преобразует страницы PDF в изображения и применяет OCR для извлечения текста."""
+    images = convert_from_path(file_path)  # Конвертируем PDF в изображения
+    text = "\n".join([pytesseract.image_to_string(img, lang="rus+eng") for img in images])  # Распознаем текст
+
+    print(f"OCR текст: {text[:500]}")  # Для отладки
+
+    return text.strip()
+
 # Главная функция обработки тестов
 def process_test(file_path, language="ru"):
     try:
-        with open(file_path, "r", encoding="utf-8") as file:
-            text = file.read()
+        ext = os.path.splitext(file_path)[1].lower()
+
+        if ext == ".docx":
+            text = read_docx(file_path)
+        elif ext == ".pdf":
+            text = read_pdf(file_path)  # Пробуем стандартное чтение PDF
+            if not text.strip():  # Если пусто, пробуем OCR
+                logging.warning("PDF содержит изображения, используем OCR")
+                text = read_pdf_with_ocr(file_path)
+        else:
+            with open(file_path, "r", encoding="utf-8") as file:
+                text = file.read()
+
+        if not text.strip():
+            raise ValueError("Файл не содержит текста")
 
         questions = parse_questions(text)
         processed_questions = []
@@ -131,6 +174,6 @@ async def upload_file(file: UploadFile = File(...), language: str = "ru"):
 
 # Тестирование
 if __name__ == "__main__":
-    file_path = "test_questions.txt"  # Замени на нужный путь
+    file_path = "test_questions.docx"  # Замени на нужный путь
     test_results = process_test(file_path, language="ru")
     print(json.dumps(test_results, indent=4, ensure_ascii=False))
