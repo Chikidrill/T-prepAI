@@ -7,13 +7,14 @@ import logging
 import tiktoken
 from fastapi import FastAPI, UploadFile, File, HTTPException
 import shutil
+import os
+from dotenv import load_dotenv
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# API-ключ OpenAI (замени на свой)
-OPENAI_API_KEY = "код"
-openai.api_key = OPENAI_API_KEY
+load_dotenv()  # Загружаем переменные из .env
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Настройка токенизатора
 ENCODER = tiktoken.encoding_for_model("gpt-4o-mini")
@@ -34,30 +35,7 @@ def remove_duplicates(questions):
     return unique_questions
 
 
-# Функция для извлечения текста из DOCX файла
-def extract_text_from_docx(file_path):
-    try:
-        doc = docx.Document(file_path)
-        text = []
-        for para in doc.paragraphs:
-            text.append(para.text)
-        return "\n".join(text)
-    except Exception as e:
-        logging.error(f"Ошибка при обработке DOCX: {e}")
-        raise HTTPException(status_code=500, detail="Ошибка обработки DOCX файла")
-
-
-# Функция для извлечения текста из TXT файла
-def extract_text_from_txt(file_path):
-    try:
-        with open(file_path, "r", encoding="utf-8") as file:
-            return file.read()
-    except Exception as e:
-        logging.error(f"Ошибка при обработке TXT: {e}")
-        raise HTTPException(status_code=500, detail="Ошибка обработки TXT файла")
-
-
-# Функция для обработки вопросов и ответов из текста
+# Функция для обработки вопросов и ответов из текста, включая теги
 def parse_questions(text):
     lines = text.split("\n")
     questions = []
@@ -67,9 +45,12 @@ def parse_questions(text):
         if line.endswith("?"):
             if current_question:
                 questions.append(current_question)
-            current_question = {"question": line, "answers": []}
+            current_question = {"question": line, "answers": [], "tags": []}
         elif current_question and line.strip():
-            current_question["answers"].append(line.strip())
+            if line.startswith("Теги:"):
+                current_question["tags"] = [tag.strip() for tag in line.replace("Теги:", "").split(",")]
+            else:
+                current_question["answers"].append(line.strip())
 
     if current_question:
         questions.append(current_question)
@@ -77,10 +58,10 @@ def parse_questions(text):
     return remove_duplicates(questions)
 
 
-# Генерация неверных ответов с OpenAI API (с учетом токенизации)
-def generate_wrong_answers(question, correct_answer):
+# Генерация неверных ответов с OpenAI API (учет тегов)
+def generate_wrong_answers(question, correct_answer, tags):
     try:
-        prompt = f"Вопрос: {question}\nПравильный ответ: {correct_answer}\nНеверные ответы:"
+        prompt = f"Вопрос: {question}\nПравильный ответ: {correct_answer}\nТеги: {', '.join(tags)}\nСгенерируй 3 неверных ответа, связанных с темой:"
 
         if count_tokens(prompt) > 4096:
             logging.error("Ошибка: текст слишком длинный!")
@@ -106,24 +87,21 @@ def generate_wrong_answers(question, correct_answer):
 # Главная функция обработки тестов
 def process_test(file_path, language="ru"):
     try:
-        if file_path.endswith(".docx"):
-            text = extract_text_from_docx(file_path)
-        elif file_path.endswith(".txt"):
-            text = extract_text_from_txt(file_path)
-        else:
-            raise ValueError("Unsupported file format")
+        with open(file_path, "r", encoding="utf-8") as file:
+            text = file.read()
 
         questions = parse_questions(text)
         processed_questions = []
 
         for q in questions:
             correct_answer = q['answers'][0] if q['answers'] else ""
-            wrong_answers = generate_wrong_answers(q['question'], correct_answer)
+            wrong_answers = generate_wrong_answers(q['question'], correct_answer, q["tags"])
 
             processed_questions.append({
                 "question": q['question'],
                 "correct_answer": correct_answer,
                 "wrong_answers": wrong_answers,
+                "tags": q["tags"],
                 "language": language
             })
 
@@ -153,6 +131,6 @@ async def upload_file(file: UploadFile = File(...), language: str = "ru"):
 
 # Тестирование
 if __name__ == "__main__":
-    file_path = "test_questions.txt"  # Или "test_questions.docx"
+    file_path = "test_questions.txt"  # Замени на нужный путь
     test_results = process_test(file_path, language="ru")
     print(json.dumps(test_results, indent=4, ensure_ascii=False))
