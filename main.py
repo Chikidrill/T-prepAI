@@ -45,7 +45,7 @@ def parse_questions(text):
     current_question = None
 
     for line in lines:
-        line = line.strip()  # Убираем лишние пробелы и \n
+        line = line.strip()  # Убираем лишние пробелы
 
         if not line:
             continue  # Пропускаем пустые строки
@@ -58,12 +58,69 @@ def parse_questions(text):
             if line.startswith("Теги:"):
                 current_question["tags"] = [tag.strip() for tag in line.replace("Теги:", "").split(",")]
             else:
-                current_question["answers"].append(line)
+                current_question["answers"].append(line.strip())
 
     if current_question:
         questions.append(current_question)
 
+    # 🔹 Генерация ответов, если их нет
+    for q in questions:
+        if not q["answers"]:  # Если у вопроса нет ответа, генерируем его
+            correct_answer, wrong_answers = generate_answers(q["question"], q["tags"])
+            q["answers"] = [" ".join(correct_answer.strip().splitlines())]  # Объединяем строки правильного ответа
+            q["wrong_answers"] = list(set(" ".join(ans.strip().splitlines()) for ans in wrong_answers if ans.strip()))  # Убираем дубли, соединяем строки
+            logging.info(f"Сгенерирован ответ: {q['question']} -> {q['answers'][0]} | {q['wrong_answers']}")
+        else:
+            correct_answer = " ".join(q["answers"]).strip().replace("\n", " ")  # Убираем переносы строк
+            wrong_answers = generate_wrong_answers(q["question"], correct_answer, q["tags"])
+            q["answers"] = [correct_answer]  # Записываем ответ
+            q["wrong_answers"] = list(set(" ".join(ans.strip().splitlines()) for ans in wrong_answers if ans.strip()))  # Убираем дубли, соединяем строки
+            logging.info(f"Обработан существующий ответ: {q['question']} -> {q['answers'][0]} | {q['wrong_answers']}")
+
+    print(f"DEBUG (список вопросов после обработки):\n{json.dumps(questions, indent=4, ensure_ascii=False)}")
+
     return remove_duplicates(questions)
+
+
+
+def generate_answers(question, tags):
+    try:
+        prompt = f"""
+Вопрос: {question}
+Теги: {', '.join(tags) if tags else 'нет'}
+Сгенерируй 1 правильный и 3 правдоподобных, но неверных ответа. 
+Ответы должны быть четкими, однострочными.
+Формат:
+Правильный: [текст правильного ответа]
+Неправильные: [ответ 1], [ответ 2], [ответ 3]
+        """
+
+        if count_tokens(prompt) > 4096:
+            logging.error("Ошибка: текст слишком длинный!")
+            return "Ошибка генерации", ["Ошибка генерации 1", "Ошибка генерации 2", "Ошибка генерации 3"]
+
+        response = openai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Ты генератор тестов. Придумай 1 правильный и 3 неправильных ответа."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7
+        )
+
+        content = response.choices[0].message.content.strip()
+        lines = content.split("\n")
+
+        correct_answer = lines[0].replace("Правильный: ", "").strip()
+        wrong_answers = [ans.strip() for ans in lines[1].replace("Неправильные: ", "").split(",")]
+
+        if len(wrong_answers) < 3:
+            wrong_answers = ["Ошибка генерации 1", "Ошибка генерации 2", "Ошибка генерации 3"]
+
+        return correct_answer, wrong_answers
+    except Exception as e:
+        logging.error(f"Ошибка генерации ответов: {e}")
+        return "Ошибка генерации", ["Ошибка генерации 1", "Ошибка генерации 2", "Ошибка генерации 3"]
 
 
 # Генерация неверных ответов с OpenAI API (учет тегов)
@@ -122,8 +179,8 @@ def process_test(file_path, language="ru"):
         if ext == ".docx":
             text = read_docx(file_path)
         elif ext == ".pdf":
-            text = read_pdf(file_path)  # Пробуем стандартное чтение PDF
-            if not text.strip():  # Если пусто, пробуем OCR
+            text = read_pdf(file_path)
+            if not text.strip():
                 logging.warning("PDF содержит изображения, используем OCR")
                 text = read_pdf_with_ocr(file_path)
         else:
@@ -134,19 +191,28 @@ def process_test(file_path, language="ru"):
             raise ValueError("Файл не содержит текста")
 
         questions = parse_questions(text)
-        processed_questions = []
 
+        if not questions:
+            logging.error("Ошибка: не удалось извлечь вопросы!")
+            raise ValueError("Ошибка обработки вопросов")
+
+        processed_questions = []
         for q in questions:
-            correct_answer = q['answers'][0] if q['answers'] else ""
-            wrong_answers = generate_wrong_answers(q['question'], correct_answer, q["tags"])
+            if not q["answers"]:  # Если нет ответа, генерируем его с нейросетью
+                correct_answer, wrong_answers = generate_answers(q["question"], q["tags"])
+            else:  # Если ответ есть, используем его
+                correct_answer = q["answers"][0]
+                wrong_answers = generate_wrong_answers(q["question"], correct_answer, q["tags"])
 
             processed_questions.append({
-                "question": q['question'],
+                "question": q["question"],
                 "correct_answer": correct_answer,
                 "wrong_answers": wrong_answers,
                 "tags": q["tags"],
                 "language": language
             })
+
+        print(f"DEBUG (готовый JSON):\n{json.dumps(processed_questions, indent=4, ensure_ascii=False)}")
 
         return processed_questions
     except Exception as e:
@@ -174,6 +240,6 @@ async def upload_file(file: UploadFile = File(...), language: str = "ru"):
 
 # Тестирование
 if __name__ == "__main__":
-    file_path = "test_questions.docx"  # Замени на нужный путь
+    file_path = "test_questions.txt"  # Замени на нужный путь
     test_results = process_test(file_path, language="ru")
     print(json.dumps(test_results, indent=4, ensure_ascii=False))
