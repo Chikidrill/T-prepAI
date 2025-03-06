@@ -236,10 +236,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-def home():
-    return {"message": "API is running!"}
-
 @app.get("/get_questions")
 async def get_questions():
     try:
