@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 import fitz
 import pytesseract
 from pdf2image import convert_from_path
+from fastapi.middleware.cors import CORSMiddleware
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -223,6 +224,13 @@ def process_test(file_path, language="ru"):
 # FastAPI сервер для обработки файлов через API
 app = FastAPI()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Или укажите ["http://localhost:5176"]
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.post("/process_test")
 async def upload_file(file: UploadFile = File(...), language: str = "ru"):
