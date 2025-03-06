@@ -7,4 +7,4 @@ pdf2image
 pytesseract
 python-docx
 tiktoken
-fitz
+pymupdf
