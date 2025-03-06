@@ -232,6 +232,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/")
+def home():
+    return {"message": "API is running!"}
+
 @app.post("/process_test")
 async def upload_file(file: UploadFile = File(...), language: str = "ru"):
     try:
@@ -244,10 +248,3 @@ async def upload_file(file: UploadFile = File(...), language: str = "ru"):
     except Exception as e:
         logging.error(f"Ошибка обработки запроса: {e}")
         raise HTTPException(status_code=500, detail="Ошибка обработки запроса")
-
-
-# Тестирование
-if __name__ == "__main__":
-    file_path = "test_questions.txt"  # Замени на нужный путь
-    test_results = process_test(file_path, language="ru")
-    print(json.dumps(test_results, indent=4, ensure_ascii=False))
