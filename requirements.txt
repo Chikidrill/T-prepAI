@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+openai
+python-dotenv
+nltk
+pdf2image
+pytesseract
+python-docx
+tiktoken
+fitz
