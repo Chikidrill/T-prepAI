@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 import fitz
 import pytesseract
 from pdf2image import convert_from_path
+from fastapi.middleware.cors import CORSMiddleware
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -225,6 +226,20 @@ def process_test(file_path, language="ru"):
 
 # FastAPI сервер для обработки файлов через API
 app = FastAPI()
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Или укажите ["http://localhost:5176"]
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/")
+def home():
+    return {"message": "API is running!"}
+
 @app.get("/get_questions")
 async def get_questions():
     try:
@@ -233,6 +248,7 @@ async def get_questions():
         return {"questions": questions}
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Файл с вопросами не найден")
+
 
 @app.post("/process_test")
 async def upload_file(file: UploadFile = File(...), language: str = "ru"):
@@ -247,9 +263,3 @@ async def upload_file(file: UploadFile = File(...), language: str = "ru"):
         logging.error(f"Ошибка обработки запроса: {e}")
         raise HTTPException(status_code=500, detail="Ошибка обработки запроса")
 
-
-# Тестирование
-if __name__ == "__main__":
-    file_path = "test_questions.txt"  # Замени на нужный путь
-    test_results = process_test(file_path, language="ru")
-    print(json.dumps(test_results, indent=4, ensure_ascii=False))
