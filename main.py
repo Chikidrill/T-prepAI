@@ -214,6 +214,9 @@ def process_test(file_path, language="ru"):
             })
 
         print(f"DEBUG (готовый JSON):\n{json.dumps(processed_questions, indent=4, ensure_ascii=False)}")
+        json_path = "output.json"
+        with open(json_path, "w", encoding="utf-8") as json_file:
+            json.dump(processed_questions, json_file, indent=4, ensure_ascii=False)
 
         return processed_questions
     except Exception as e:
@@ -223,6 +226,7 @@ def process_test(file_path, language="ru"):
 
 # FastAPI сервер для обработки файлов через API
 app = FastAPI()
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -236,6 +240,16 @@ app.add_middleware(
 def home():
     return {"message": "API is running!"}
 
+@app.get("/get_questions")
+async def get_questions():
+    try:
+        with open("output.json", "r", encoding="utf-8") as json_file:
+            questions = json.load(json_file)
+        return {"questions": questions}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Файл с вопросами не найден")
+
+
 @app.post("/process_test")
 async def upload_file(file: UploadFile = File(...), language: str = "ru"):
     try:
@@ -248,3 +262,4 @@ async def upload_file(file: UploadFile = File(...), language: str = "ru"):
     except Exception as e:
         logging.error(f"Ошибка обработки запроса: {e}")
         raise HTTPException(status_code=500, detail="Ошибка обработки запроса")
+
